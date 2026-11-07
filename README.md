@@ -1,2 +1,2 @@
 # YantraDrishti
-AI-Powered Predictive Digital Twin for Smart Manufacturing
+AI-Powered Predictive Digital Twin for Smart Manufacturing.
