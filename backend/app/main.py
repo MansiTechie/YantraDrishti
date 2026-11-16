@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 
 from app.api.machines import router as machines_router
+from app.api.predictions import router as predictions_router
 
 app = FastAPI(
     title="YantraDrishti API",
@@ -28,3 +29,4 @@ def health_check():
 
 
 app.include_router(machines_router)
+app.include_router(predictions_router)
