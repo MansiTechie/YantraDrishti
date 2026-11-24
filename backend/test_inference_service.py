@@ -14,6 +14,7 @@ from app.services.inference_service import (
     InvalidPredictionError,
     ModelUnavailableError,
     RULInferenceService,
+    get_default_model_path,
 )
 
 # Reference sample payload
@@ -269,6 +270,91 @@ def test_prediction_execution_failure():
     print("PASS: Internal model execution failure correctly wrapped in InvalidPredictionError")
 
 
+def test_feature_order_compatibility_rejection():
+    """Verify artifacts with missing or incompatible features are rejected with ModelUnavailableError."""
+    req = RULPredictionRequest.model_validate(sample_request_data)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        import joblib
+
+        # 1. Artifact with reversed feature list
+        bad_artifact_path = Path(tmp_dir) / "reversed_features.joblib"
+        bad_artifact = {
+            "model": MockRULModel(return_val=75.0),
+            "model_name": "ReversedModel",
+            "model_version": "1.0.0",
+            "features": list(reversed(FEATURE_ORDER)),
+        }
+        joblib.dump(bad_artifact, bad_artifact_path)
+
+        service = RULInferenceService(model_artifact_path=bad_artifact_path)
+        try:
+            service.predict(req)
+            raise AssertionError("Expected ModelUnavailableError for incompatible feature order")
+        except ModelUnavailableError as e:
+            assert "feature specification" in str(e).lower()
+
+        # 2. Artifact with truncated feature list
+        truncated_path = Path(tmp_dir) / "truncated_features.joblib"
+        truncated_artifact = {
+            "model": MockRULModel(return_val=75.0),
+            "model_name": "TruncatedModel",
+            "model_version": "1.0.0",
+            "features": list(FEATURE_ORDER)[:20],
+        }
+        joblib.dump(truncated_artifact, truncated_path)
+
+        service_trunc = RULInferenceService(model_artifact_path=truncated_path)
+        try:
+            service_trunc.predict(req)
+            raise AssertionError("Expected ModelUnavailableError for truncated features")
+        except ModelUnavailableError as e:
+            assert "feature specification" in str(e).lower()
+
+        # 3. Artifact missing features key entirely
+        missing_feat_path = Path(tmp_dir) / "missing_features.joblib"
+        missing_feat_artifact = {
+            "model": MockRULModel(return_val=75.0),
+            "model_name": "MissingFeatModel",
+            "model_version": "1.0.0",
+        }
+        joblib.dump(missing_feat_artifact, missing_feat_path)
+
+        service_missing = RULInferenceService(model_artifact_path=missing_feat_path)
+        try:
+            service_missing.predict(req)
+            raise AssertionError("Expected ModelUnavailableError for missing features key")
+        except ModelUnavailableError as e:
+            assert "feature specification is missing or does not match" in str(e).lower()
+
+    print("PASS: Incompatible feature ordering strictly rejected with ModelUnavailableError")
+
+
+def test_real_trained_artifact_loading_and_prediction():
+    """Verify the real trained RandomForestRegressor artifact loads and predicts accurately."""
+    real_artifact_path = get_default_model_path()
+    assert real_artifact_path is not None, "Real model artifact not found at ml/models/rul_baseline.joblib"
+    assert real_artifact_path.is_file(), f"Real model artifact does not exist at {real_artifact_path}"
+
+    req = RULPredictionRequest.model_validate(sample_request_data)
+
+    service = RULInferenceService(model_artifact_path=real_artifact_path)
+    assert service.is_available, "Service should report available when valid artifact is present"
+
+    response = service.predict(req)
+
+    assert isinstance(response, RULPredictionResponse)
+    assert response.machine_id == sample_request_data["machine_id"]
+    assert response.predicted_rul_cycles >= 0.0
+    assert math.isfinite(response.predicted_rul_cycles)
+    assert response.unit == "cycles"
+    assert response.model_name == "RandomForestRegressor"
+    assert response.model_version == "1.0.0"
+    assert response.prediction_status == PredictionStatus.SUCCESS
+
+    print(f"PASS: Real trained artifact loaded and predicted RUL: {response.predicted_rul_cycles:.2f} cycles")
+
+
 if __name__ == "__main__":
     tests = [
         test_default_initialization_does_not_crash,
@@ -280,6 +366,8 @@ if __name__ == "__main__":
         test_negative_prediction_rejection,
         test_model_metadata_handling,
         test_prediction_execution_failure,
+        test_feature_order_compatibility_rejection,
+        test_real_trained_artifact_loading_and_prediction,
     ]
 
     for t in tests:
