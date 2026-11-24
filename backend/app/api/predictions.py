@@ -9,6 +9,7 @@ from app.services.inference_service import (
     InvalidPredictionError,
     ModelUnavailableError,
     RULInferenceService,
+    get_default_model_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -18,8 +19,10 @@ router = APIRouter(
     tags=["Predictions"],
 )
 
-# Shared unconfigured default service instance (lazy loading, no startup crash)
-_default_inference_service = RULInferenceService()
+# Shared default service instance (lazy loading, configured with default artifact if available)
+_default_inference_service = RULInferenceService(
+    model_artifact_path=get_default_model_path()
+)
 
 
 def get_inference_service() -> RULInferenceService:

@@ -88,10 +88,12 @@ def test_application_startup_without_model_artifact():
 
 def test_missing_model_returns_503():
     """Verify unconfigured/missing model returns HTTP 503 Service Unavailable."""
-    client = TestClient(app)
-    # Ensure default unconfigured service is used (no model loaded)
-    app.dependency_overrides.clear()
+    missing_service = RULInferenceService(
+        model_artifact_path="non_existent_path/missing_model.joblib"
+    )
+    app.dependency_overrides[get_inference_service] = lambda: missing_service
 
+    client = TestClient(app)
     response = client.post("/api/v1/predictions/rul", json=sample_prediction_payload)
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     data = response.json()
@@ -99,7 +101,32 @@ def test_missing_model_returns_503():
     assert "unavailable" in data["detail"].lower()
     # Confirm no stack traces or filesystem paths leaked
     assert "traceback" not in response.text.lower()
+
+    app.dependency_overrides.clear()
     print("PASS: Missing model returns HTTP 503 with clean client message")
+
+
+def test_real_trained_model_returns_200():
+    """Verify default service with real trained artifact returns HTTP 200 and accurate prediction."""
+    import math
+
+    # Ensure default service with real trained artifact is used
+    app.dependency_overrides.clear()
+
+    client = TestClient(app)
+    response = client.post("/api/v1/predictions/rul", json=sample_prediction_payload)
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+
+    validated_resp = RULPredictionResponse.model_validate(data)
+    assert validated_resp.machine_id == sample_prediction_payload["machine_id"]
+    assert validated_resp.predicted_rul_cycles >= 0.0
+    assert math.isfinite(validated_resp.predicted_rul_cycles)
+    assert validated_resp.unit == "cycles"
+    assert validated_resp.model_name == "RandomForestRegressor"
+    assert validated_resp.model_version == "1.0.0"
+    assert validated_resp.prediction_status == PredictionStatus.SUCCESS
+    print(f"PASS: Real trained model API call succeeded with RUL = {validated_resp.predicted_rul_cycles:.2f} cycles")
 
 
 def test_valid_request_with_mock_returns_200():
@@ -244,6 +271,7 @@ if __name__ == "__main__":
         test_application_startup_without_model_artifact,
         test_missing_model_returns_503,
         test_valid_request_with_mock_returns_200,
+        test_real_trained_model_returns_200,
         test_invalid_request_returns_422,
         test_unexpected_inference_failure_returns_500,
         test_existing_machine_endpoints_continue_to_work,

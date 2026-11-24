@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.schemas.prediction import (
+    FEATURE_ORDER,
     PredictionStatus,
     RULPredictionRequest,
     RULPredictionResponse,
@@ -85,6 +86,15 @@ class RULInferenceService:
                 self._model = loaded["model"]
                 self._model_name = self._model_name or loaded.get("model_name")
                 self._model_version = self._model_version or loaded.get("model_version")
+
+                # Validate feature-order compatibility if features are specified in the artifact
+                saved_features = loaded.get("features")
+                if saved_features is None or list(saved_features) != list(FEATURE_ORDER):
+                    self._model = None
+                    raise ModelUnavailableError(
+                        f"Model artifact feature specification is missing or does not match canonical 46-feature ordering. "
+                        f"Expected {len(FEATURE_ORDER)} features."
+                    )
             else:
                 self._model = loaded
 
@@ -125,7 +135,15 @@ class RULInferenceService:
         features = extract_feature_vector(request)
 
         try:
-            raw_output = self._model.predict([features])
+            if hasattr(self._model, "feature_names_in_"):
+                try:
+                    import pandas as pd
+                    model_input = pd.DataFrame([features], columns=self._model.feature_names_in_)
+                except ImportError:
+                    model_input = [features]
+            else:
+                model_input = [features]
+            raw_output = self._model.predict(model_input)
         except Exception as e:
             raise InvalidPredictionError(f"Model prediction execution failed: {e}") from e
 
@@ -155,3 +173,31 @@ class RULInferenceService:
             model_version=self._model_version,
             prediction_status=PredictionStatus.SUCCESS,
         )
+
+
+def get_default_model_path() -> Optional[Path]:
+    """
+    Resolves the default trained model artifact path if present on disk or specified via environment.
+    Always returns a fully resolved absolute Path so it functions consistently regardless of CWD.
+    """
+    import os
+
+    env_path = os.getenv("MODEL_ARTIFACT_PATH")
+    if env_path:
+        p = Path(env_path).resolve()
+        if p.is_file():
+            return p
+
+    # Absolute path based on repository root relative to this file:
+    # backend/app/services/inference_service.py -> parents[3] is repository root
+    repo_root = Path(__file__).resolve().parents[3]
+    repo_artifact = (repo_root / "ml" / "models" / "rul_baseline.joblib").resolve()
+    if repo_artifact.is_file():
+        return repo_artifact
+
+    # Fallback checking relative to current working directory
+    cwd_artifact = Path("ml/models/rul_baseline.joblib").resolve()
+    if cwd_artifact.is_file():
+        return cwd_artifact
+
+    return None
