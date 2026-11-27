@@ -1,13 +1,36 @@
-
+from contextlib import asynccontextmanager
+import logging
 from fastapi import FastAPI
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.api.machines import router as machines_router
 from app.api.predictions import router as predictions_router
+from app.core.config import settings
+from app.db.session import init_db
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize database tables on application startup
+    try:
+        init_db()
+        logger.info("Database tables verified/initialized successfully.")
+    except (OperationalError, DBAPIError) as exc:
+        logger.warning(
+            "Database table initialization skipped during startup: %s. "
+            "If using PostgreSQL, ensure the server is running and accessible.",
+            exc,
+        )
+    yield
+
 
 app = FastAPI(
-    title="YantraDrishti API",
-    description="AI-Powered Predictive Digital Twin for Smart Manufacturing",
-    version="0.1.0",
+    title=settings.PROJECT_NAME,
+    description=settings.DESCRIPTION,
+    version=settings.VERSION,
+    lifespan=lifespan,
 )
 
 
@@ -16,7 +39,7 @@ def root():
     return {
         "project": "YantraDrishti",
         "message": "Backend is running",
-        "version": "0.1.0",
+        "version": settings.VERSION,
     }
 
 

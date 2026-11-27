@@ -1,3 +1,6 @@
+import os
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
 import copy
 from fastapi import status
 from fastapi.testclient import TestClient
@@ -222,33 +225,32 @@ def test_unexpected_inference_failure_returns_500():
 
 def test_existing_machine_endpoints_continue_to_work():
     """Verify existing machine registration and retrieval endpoints are fully operational."""
-    client = TestClient(app)
+    with TestClient(app) as client:
+        # 1. Register a machine
+        reg_resp = client.post("/api/v1/machines", json=sample_machine_payload)
+        assert reg_resp.status_code == status.HTTP_201_CREATED
+        assert reg_resp.json()["identity"]["machine_id"] == "FD001-TEST-MACHINE-999"
 
-    # 1. Register a machine
-    reg_resp = client.post("/api/v1/machines", json=sample_machine_payload)
-    assert reg_resp.status_code == status.HTTP_201_CREATED
-    assert reg_resp.json()["identity"]["machine_id"] == "FD001-TEST-MACHINE-999"
+        # 2. Retrieve all machines
+        list_resp = client.get("/api/v1/machines")
+        assert list_resp.status_code == status.HTTP_200_OK
+        machine_ids = [m["identity"]["machine_id"] for m in list_resp.json()]
+        assert "FD001-TEST-MACHINE-999" in machine_ids
 
-    # 2. Retrieve all machines
-    list_resp = client.get("/api/v1/machines")
-    assert list_resp.status_code == status.HTTP_200_OK
-    machine_ids = [m["identity"]["machine_id"] for m in list_resp.json()]
-    assert "FD001-TEST-MACHINE-999" in machine_ids
+        # 3. Retrieve single machine
+        get_resp = client.get("/api/v1/machines/FD001-TEST-MACHINE-999")
+        assert get_resp.status_code == status.HTTP_200_OK
+        assert get_resp.json()["identity"]["machine_id"] == "FD001-TEST-MACHINE-999"
 
-    # 3. Retrieve single machine
-    get_resp = client.get("/api/v1/machines/FD001-TEST-MACHINE-999")
-    assert get_resp.status_code == status.HTTP_200_OK
-    assert get_resp.json()["identity"]["machine_id"] == "FD001-TEST-MACHINE-999"
+        # 4. Duplicate registration 409
+        dup_resp = client.post("/api/v1/machines", json=sample_machine_payload)
+        assert dup_resp.status_code == status.HTTP_409_CONFLICT
 
-    # 4. Duplicate registration 409
-    dup_resp = client.post("/api/v1/machines", json=sample_machine_payload)
-    assert dup_resp.status_code == status.HTTP_409_CONFLICT
+        # 5. Non-existent machine 404
+        not_found_resp = client.get("/api/v1/machines/DOES_NOT_EXIST")
+        assert not_found_resp.status_code == status.HTTP_404_NOT_FOUND
 
-    # 5. Non-existent machine 404
-    not_found_resp = client.get("/api/v1/machines/DOES_NOT_EXIST")
-    assert not_found_resp.status_code == status.HTTP_404_NOT_FOUND
-
-    print("PASS: Existing machine registration and retrieval endpoints work seamlessly")
+        print("PASS: Existing machine registration and retrieval endpoints work seamlessly")
 
 
 def test_health_and_root_endpoints_continue_to_work():
